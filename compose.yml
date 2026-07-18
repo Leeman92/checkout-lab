@@ -1,0 +1,60 @@
+services:
+    app:
+        build:
+            context: .
+            dockerfile: Dockerfile
+            target: development
+        restart: unless-stopped
+        environment:
+            SPRING_PROFILES_ACTIVE: development
+            SPRING_DOCKER_COMPOSE_ENABLED: "false"
+        ports:
+            - "${APP_PORT:-8080}:8080"
+        volumes:
+            - .:/app
+            - app_target:/app/target
+        networks:
+            - checkout_lab
+        develop:
+            watch:
+                - action: restart
+                  path: ./src
+                - action: rebuild
+                  path: ./pom.xml
+                - action: rebuild
+                  path: ./Dockerfile
+
+    postgres:
+        image: postgres:18.4
+        environment:
+            POSTGRES_USER: ${POSTGRES_USER:-postgres}
+            POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+            PGDATA: /data/postgres
+        volumes:
+            - postgres:/data/postgres
+        networks:
+            - checkout_lab
+        restart: unless-stopped
+
+    pgadmin:
+        image: dpage/pgadmin4:2026-06-18-3
+        environment:
+            PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-pgadmin4@pgadmin.org}
+            PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin}
+            PGADMIN_CONFIG_SERVER_MODE: 'False'
+        ports:
+            - "${PGADMIN_PORT:-8081}:80"
+        volumes:
+            - pgadmin:/var/lib/pgadmin
+        networks:
+            - checkout_lab
+        restart: unless-stopped
+
+networks:
+    checkout_lab:
+        driver: bridge
+
+volumes:
+    app_target:
+    postgres:
+    pgadmin:

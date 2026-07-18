@@ -1,0 +1,30 @@
+services:
+    app:
+        labels:
+            - "traefik.enable=true"
+            - "traefik.http.routers.springboot.rule=Host(`${APP_URL:-springboot.localhost}`)"
+            - "traefik.http.routers.springboot.entrypoints=websecure"
+            - "traefik.http.routers.springboot.tls=true"
+            - "traefik.http.services.springboot.loadbalancer.server.port=8080"
+            - "traefik.docker.network=${TRAEFIK_NETWORK:-traefik}"
+        networks:
+            - traefik_network
+        ports: !reset []
+
+    pgadmin:
+        networks:
+            - traefik_network
+        labels:
+            - "traefik.enable=true"
+            - "traefik.http.routers.pgadmin.rule=Host(`${PG_ADMIN_URL:-pgadmin.localhost}`)"
+            - "traefik.http.routers.pgadmin.entrypoints=websecure"
+            - "traefik.http.routers.pgadmin.tls=true"
+            - "traefik.http.services.pgadmin.loadbalancer.server.port=80"
+            - "traefik.docker.network=${TRAEFIK_NETWORK:-traefik}"
+        restart: unless-stopped
+        ports: !reset []
+
+networks:
+    traefik_network:
+        external: true
+        name: ${TRAEFIK_NETWORK:-traefik}
