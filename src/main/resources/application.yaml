@@ -1,6 +1,6 @@
 spring:
     application:
-        name: checkout-lab
+        name: ${APP_NAME:checkout-lab}
     datasource:
         url: jdbc:postgresql://postgres:5432/${POSTGRES_DB_NAME}
         username: ${POSTGRES_USER}
@@ -11,3 +11,6 @@ spring:
         properties:
             hibernate:
                 dialect: org.hibernate.dialect.PostgreSQLDialect
+logging:
+    level:
+        web: ${LOG_LEVEL:INFO}

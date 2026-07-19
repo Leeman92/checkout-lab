@@ -37,3 +37,5 @@ build/
 
 *.md
 !README.md
+
+var/log/
