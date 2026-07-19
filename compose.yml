@@ -8,6 +8,8 @@ services:
         environment:
             SPRING_PROFILES_ACTIVE: development
             SPRING_DOCKER_COMPOSE_ENABLED: "false"
+        env_file:
+            - .env
         ports:
             - "${APP_PORT:-8080}:8080"
         volumes:
@@ -29,6 +31,7 @@ services:
         environment:
             POSTGRES_USER: ${POSTGRES_USER:-postgres}
             POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+            POSTGRES_DB: ${POSTGRES_DB_NAME:-checkout_lab}
             PGDATA: /data/postgres
         volumes:
             - postgres:/data/postgres
