@@ -3,6 +3,9 @@
 .PHONY: *
 
 USE_TRAEFIK ?= 0
+HOST_UID := $(shell id -u)
+HOST_GID := $(shell id -g)
+export HOST_UID HOST_GID
 
 DOCKER_COMPOSE := docker compose
 DOCKER_FILES := -f compose.yml
@@ -23,7 +26,7 @@ up-attached:
 	${FULL_DOCKER_COMPOSE} up --build --watch
 
 build-prod:
-	 docker build --target production -t checkout-lab .
+	docker build --build-arg USER_ID=${HOST_UID} --build-arg GROUP_ID=${HOST_GID} --target production -t checkout-lab .
 
 # stops the container
 stop:

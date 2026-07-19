@@ -4,6 +4,10 @@ services:
             context: .
             dockerfile: Dockerfile
             target: development
+            args:
+                USER_ID: "${HOST_UID:-1000}"
+                GROUP_ID: "${HOST_GID:-1000}"
+        user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
         restart: unless-stopped
         environment:
             SPRING_PROFILES_ACTIVE: development
