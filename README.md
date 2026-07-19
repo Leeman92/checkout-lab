@@ -1,11 +1,26 @@
 # Checkout Lab
 
-Checkout Lab is a Spring Boot development project that runs in Docker. The development stack
-contains the application, PostgreSQL, and pgAdmin. You do not need Java, Maven, PostgreSQL, or
-pgAdmin installed on your computer when you use the Docker workflow described here.
+Checkout Lab is a Java 25 and Spring Boot 4.1 development project for experimenting with a
+PostgreSQL-backed checkout API. The Docker development stack contains the application, PostgreSQL,
+and pgAdmin. You do not need Java, Maven, PostgreSQL, or pgAdmin installed on your computer when you
+use the Docker workflow described here.
 
 If this is your first time using the project, start **without Traefik**. Traefik is optional and is
 only useful if you already have, or intentionally want to operate, a local Traefik reverse proxy.
+
+## Current functionality
+
+The application currently provides a product API with:
+
+- PostgreSQL persistence through Spring Data JPA and automatic development schema updates
+- unique product SKUs
+- product list, lookup, and creation endpoints
+- a development-only endpoint that inserts 12 sample products
+- calculated formatted prices and available stock on products loaded from the database
+- request IDs in the `X-Request-ID` response header, response bodies, and log context
+- consistent metadata envelopes for successful JSON responses
+- `application/problem+json` responses for missing products, duplicate SKUs, and unexpected errors
+- console and size/time-rotated file logging
 
 ## Quick start for new developers
 
@@ -46,7 +61,12 @@ APP_URL=springboot.localhost
 PG_ADMIN_URL=pgadmin.localhost
 TRAEFIK_NETWORK=traefik
 USE_TRAEFIK=0
+HOST_UID=1000
+HOST_GID=1000
 ```
+
+Set `HOST_UID` and `HOST_GID` to the values printed by `id -u` and `id -g`. The Make targets set
+them automatically; these `.env` values are used when you invoke `docker compose` directly.
 
 The `.env` file is local configuration. Do not commit passwords or other secrets stored in it.
 
@@ -73,9 +93,8 @@ With `USE_TRAEFIK=0`, open:
 
 If you changed `APP_PORT` or `PGADMIN_PORT`, use the corresponding port from `.env` instead.
 
-> The project does not currently define a page or API at `/`. A JSON error response at the base URL
-> therefore still confirms that Spring Boot is reachable. It does not necessarily mean Docker
-> failed to start.
+> The project does not define a page or API at `/`. A JSON error response at the base URL therefore
+> still confirms that Spring Boot is reachable. Use `/products` to access the API.
 
 When you finish working, stop the detached containers with:
 
@@ -102,9 +121,76 @@ It displays logs and stays attached to the current terminal; press `Ctrl+C` to s
 | `postgres` | PostgreSQL database | Only reachable by other containers as `postgres:5432` |
 | `pgadmin` | Browser-based PostgreSQL administration | `http://localhost:${PGADMIN_PORT}` (port `8081` by default) |
 
-PostgreSQL and pgAdmin run even though the application does not currently have a datasource
-configured. PostgreSQL itself is not published on a host port; pgAdmin reaches it through Docker's
-internal network.
+The application connects to PostgreSQL as `postgres:5432` through Docker's internal network and
+uses the database configured by `POSTGRES_DB_NAME`. PostgreSQL is not published on a host port;
+pgAdmin reaches it through the same internal network.
+
+## Product API
+
+The examples below use direct-port mode. Replace `http://localhost:8080` with your configured URL
+when using another port or Traefik.
+
+| Method | Path | Purpose | Success status |
+| --- | --- | --- | --- |
+| `GET` | `/products` | List all products | `200 OK` |
+| `GET` | `/products/{sku}` | Find one product; the path SKU is normalized to uppercase | `200 OK` |
+| `POST` | `/products` | Create one product from JSON | `200 OK` |
+| `POST` | `/products/testdata` | Insert the 12 development sample products | `200 OK` |
+
+Both the path with and without a trailing slash are accepted. The `testdata` endpoint is only a
+development convenience and should be removed or disabled before a production deployment. Because
+the sample SKUs are fixed, calling it more than once returns `409 Conflict` unless the previous
+sample rows were removed.
+
+Create a product:
+
+```shell
+curl --fail-with-body \
+  --request POST \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "sku": "TSHIRT-BLK-M",
+    "name": "Basic T-Shirt Black M",
+    "netPriceInCents": 1999,
+    "active": true,
+    "totalStock": 25,
+    "reservedStock": 3
+  }' \
+  http://localhost:8080/products
+```
+
+Product JSON contains the persisted fields `id`, `sku`, `name`, `netPriceInCents`, `active`,
+`totalStock`, and `reservedStock`. Products read from PostgreSQL also expose the derived fields
+`netFormattedPrice` (for example `19.99`) and `availableStock` (`totalStock - reservedStock`). Prices
+are persisted as integer cents to avoid floating-point storage errors.
+
+Successful JSON responses are wrapped with metadata:
+
+```json
+{
+  "timestamp": "2026-07-19T10:15:30.123Z",
+  "requestId": "59edc107-a937-40e0-b387-3d342053a238",
+  "data": {
+    "id": 1,
+    "sku": "TSHIRT-BLK-M",
+    "name": "Basic T-Shirt Black M",
+    "netPriceInCents": 1999,
+    "active": true,
+    "totalStock": 25,
+    "reservedStock": 3,
+    "netFormattedPrice": 19.99,
+    "availableStock": 22
+  }
+}
+```
+
+You may send a UUID in the `X-Request-ID` request header. The application returns a canonical copy
+in the response header and JSON body. A missing or invalid value is replaced with a generated UUID.
+
+Errors use Spring's Problem Details representation. A missing product returns `404 Not Found` with
+the requested SKU, while a unique-SKU conflict returns `409 Conflict`. Each problem contains
+`type`, `title`, `status`, `detail`, `instance`, `timestamp`, and `requestId`; unexpected exceptions
+return a generic `500 Internal Server Error` detail without leaking internal implementation data.
 
 ## Everyday development commands
 
@@ -133,6 +219,22 @@ updates your local files. Maven's generated `target` directory is kept in the Do
 - A change below `src` restarts the application container.
 - A change to `pom.xml` or `Dockerfile` rebuilds the development image.
 
+### Tests and verification
+
+`make test` runs focused tests for the product entity, product service, request-ID filter, API
+response envelope, request serialization, SKU normalization, sample-data generation, and Problem
+Details errors. These tests use in-memory fakes and `MockMvc`, so the test cases themselves do not
+modify the development database.
+
+`make verify` additionally checks Java formatting with Spotless, runs SpotBugs, and generates the
+JaCoCo coverage report under `target/site/jacoco` inside the app target volume. If Java 25 is
+installed locally, the Maven wrapper can run the same lifecycle without the app container:
+
+```shell
+./mvnw test
+./mvnw verify
+```
+
 ## Environment variables
 
 The Makefile reads `.env` and uses `USE_TRAEFIK` to decide whether to include
@@ -140,25 +242,48 @@ The Makefile reads `.env` and uses `USE_TRAEFIK` to decide whether to include
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
+| `APP_NAME` | `checkout-lab` | Spring application name and file-log basename |
 | `APP_PORT` | `8080` | Host port for the app when Traefik is disabled |
 | `PGADMIN_PORT` | `8081` | Host port for pgAdmin when Traefik is disabled |
 | `APP_URL` | `springboot.localhost` | Hostname matched by the Traefik app router |
 | `PG_ADMIN_URL` | `pgadmin.localhost` | Hostname matched by the Traefik pgAdmin router |
 | `TRAEFIK_NETWORK` | `traefik` | Existing external Docker network shared with Traefik |
 | `USE_TRAEFIK` | `0` | Set to `1` to apply `compose.traefik.yml`; otherwise use `0` |
+| `HOST_UID` | `1000` | UID used by the non-root application user inside the container |
+| `HOST_GID` | `1000` | GID used by the non-root application user inside the container |
+| `POSTGRES_USER` | `postgres` | PostgreSQL user used by the database and application |
+| `POSTGRES_PASSWORD` | `changeme` | PostgreSQL password used by the database and application |
+| `POSTGRES_DB_NAME` | `checkout_lab` | Application database created by PostgreSQL |
+| `PGADMIN_DEFAULT_EMAIL` | `pgadmin4@pgadmin.org` | Local pgAdmin login email |
+| `PGADMIN_DEFAULT_PASSWORD` | `admin` | Local pgAdmin login password |
+| `LOG_LEVEL` | `WARN` | Log level for Spring's `web` logger in `.env.example` |
+| `LOG_PATH` | `var/log` | Directory for the active and rotated application log files |
+| `CONSOLE_LOG_PATTERN` | See `.env.example` | Logback console pattern; includes the request ID from MDC |
+| `FILE_LOG_PATTERN` | See `.env.example` | Logback file pattern; includes the request ID from MDC |
 
-The Compose file also accepts these optional variables. Add them to `.env` if you need values other
-than the development defaults:
+The values in `.env.example` are development defaults. A minimal database and pgAdmin configuration
+looks like this:
 
 ```dotenv
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=changeme
+POSTGRES_DB_NAME=checkout_lab
 PGADMIN_DEFAULT_EMAIL=pgadmin4@pgadmin.org
 PGADMIN_DEFAULT_PASSWORD=admin
 ```
 
 The default credentials are for local development only. Change them before sharing or exposing the
 environment.
+
+### Logging
+
+Logback writes to the console and to `${LOG_PATH}/${APP_NAME}.log`. Files rotate daily and whenever
+they reach 10 MB; up to 30 days and 1 GB of compressed history are retained. With the default Docker
+bind mount, `var/log/checkout-lab.log` is visible in the project directory and ignored by Git.
+
+The filter stores the current request UUID under the MDC key `requestId`. Keep `%X{requestId}` in
+custom log patterns if request correlation should remain visible. `LOG_LEVEL` controls Spring's
+`web` logger; the root logger remains at `INFO` in `logback-spring.xml`.
 
 ## Using Traefik
 
