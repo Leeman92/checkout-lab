@@ -47,7 +47,7 @@ class ProductControllerTests {
 
     @Test
     void returnsProductListWithResponseMetadata() throws Exception {
-        Product product = product(7L, "TSHIRT-BLK-M", "Basic T-Shirt", 1999, true);
+        Product product = product("TSHIRT-BLK-M", "Basic T-Shirt", 1999, true);
         productService.products = List.of(product);
 
         mockMvc.perform(get("/products").header(RequestIdFilter.HEADER_NAME, REQUEST_ID))
@@ -57,7 +57,6 @@ class ProductControllerTests {
                 .andExpect(jsonPath("$.timestamp").isString())
                 .andExpect(jsonPath("$.requestId").value(REQUEST_ID))
                 .andExpect(jsonPath("$.data.length()").value(1))
-                .andExpect(jsonPath("$.data[0].id").value(7))
                 .andExpect(jsonPath("$.data[0].sku").value("TSHIRT-BLK-M"))
                 .andExpect(jsonPath("$.data[0].name").value("Basic T-Shirt"))
                 .andExpect(jsonPath("$.data[0].netPriceInCents").value(1999))
@@ -66,7 +65,7 @@ class ProductControllerTests {
 
     @Test
     void normalizesSkuBeforeLookingUpSingleProduct() throws Exception {
-        productService.product = product(8L, "TSHIRT-BLK-M", "Basic T-Shirt", 1999, true);
+        productService.product = product("TSHIRT-BLK-M", "Basic T-Shirt", 1999, true);
 
         mockMvc.perform(get("/products/tshirt-blk-m"))
                 .andExpect(status().isOk())
@@ -77,7 +76,7 @@ class ProductControllerTests {
 
     @Test
     void createsProductFromJsonRequest() throws Exception {
-        productService.productToReturn = product(9L, "HOODIE-GRY-M", "Premium Hoodie", 5999, true);
+        productService.productToReturn = product("HOODIE-GRY-M", "Premium Hoodie", 5999, true);
 
         mockMvc.perform(
                         post("/products")
@@ -94,7 +93,6 @@ class ProductControllerTests {
                                         }
                                         """))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.id").value(9))
                 .andExpect(jsonPath("$.data.sku").value("HOODIE-GRY-M"));
 
         assertThat(productService.savedProduct.getSku()).isEqualTo("HOODIE-GRY-M");
@@ -220,9 +218,8 @@ class ProductControllerTests {
                 .contains("\"requestId\":\"%s\"".formatted(generatedRequestId));
     }
 
-    private static Product product(Long id, String sku, String name, long price, boolean active) {
+    private static Product product(String sku, String name, long price, boolean active) {
         Product product = new Product();
-        product.setId(id);
         product.setSku(sku);
         product.setName(name);
         product.setNetPriceInCents(price);

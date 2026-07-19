@@ -8,6 +8,8 @@ import jakarta.persistence.PostLoad;
 import jakarta.persistence.Table;
 import jakarta.persistence.Transient;
 import jakarta.persistence.UniqueConstraint;
+import java.util.Locale;
+import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -20,6 +22,7 @@ import lombok.Setter;
 public class Product {
     @Id
     @GeneratedValue(strategy = GenerationType.AUTO)
+    @Setter(AccessLevel.PRIVATE)
     private Long id;
 
     private String sku;
@@ -40,5 +43,9 @@ public class Product {
     private void postLoad() {
         this.netFormattedPrice = netPriceInCents / 100D;
         this.availableStock = totalStock - reservedStock;
+    }
+
+    public void setSku(String sku) {
+        this.sku = sku.toUpperCase(Locale.ROOT);
     }
 }

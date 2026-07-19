@@ -2,12 +2,12 @@ spring:
     application:
         name: ${APP_NAME:checkout-lab}
     datasource:
-        url: jdbc:postgresql://postgres:5432/${POSTGRES_DB_NAME}
+        url: jdbc:postgresql://${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB_NAME}
         username: ${POSTGRES_USER}
         password: ${POSTGRES_PASSWORD}
     jpa:
         hibernate:
-            ddl-auto: update
+            ddl-auto: validate
         properties:
             hibernate:
                 dialect: org.hibernate.dialect.PostgreSQLDialect

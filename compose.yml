@@ -29,6 +29,8 @@ services:
                   path: ./pom.xml
                 - action: rebuild
                   path: ./Dockerfile
+        depends_on:
+            - postgres
 
     postgres:
         image: postgres:18.4
@@ -37,6 +39,8 @@ services:
             POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
             POSTGRES_DB: ${POSTGRES_DB_NAME:-checkout_lab}
             PGDATA: /data/postgres
+        ports:
+            - "${POSTGRES_MACHINE_PORT:-5432}:5432"
         volumes:
             - postgres:/data/postgres
         networks:

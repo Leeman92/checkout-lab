@@ -56,3 +56,7 @@ spotless:
 fix-and-verify fix:
 	$(MAKE) spotless
 	$(MAKE) verify
+
+# Run migrations
+migrate:
+	${FULL_DOCKER_COMPOSE_APP_BASH} './mvnw flyway:migrate'
