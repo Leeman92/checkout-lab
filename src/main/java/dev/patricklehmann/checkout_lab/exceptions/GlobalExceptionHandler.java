@@ -48,7 +48,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         ProblemDetail problem =
                 ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, exception.getMessage());
 
-        problem.setTitle("At least one product already exists");
+        problem.setTitle("Product already exists");
         problem.setType(URI.create("urn:problem:product-already-exists"));
 
         return createResponseEntity(problem, HttpHeaders.EMPTY, HttpStatus.CONFLICT, request);
@@ -87,9 +87,22 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
             HttpServletRequest httpRequest = servletRequest.getRequest();
 
             Object requestId = httpRequest.getAttribute(RequestIdFilter.ATTRIBUTE_NAME);
-
             if (requestId != null) {
                 problem.setProperty("requestId", requestId);
+            }
+
+            Object type = problem.getType();
+            if (type == null) {
+                String uri;
+                if (statusCode.is4xxClientError()) {
+                    uri = "urn:problem:client-error";
+                    if (statusCode.isSameCodeAs(HttpStatus.NOT_FOUND)) {
+                        uri = "urn:problem:not-found";
+                    }
+                } else {
+                    uri = "urn:problem:internal-server-error";
+                }
+                problem.setType(URI.create(uri));
             }
 
             problem.setProperty("timestamp", Instant.now());

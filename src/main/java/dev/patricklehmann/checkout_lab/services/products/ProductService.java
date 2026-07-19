@@ -61,8 +61,11 @@ public class ProductService {
             ServerErrorMessage serverError = postgresException.getServerErrorMessage();
             String detail = serverError != null ? serverError.getDetail() : null;
 
-            return new ProductAlreadyExistsException(
-                    detail != null ? detail : "A product with the supplied SKU already exists.");
+            if (detail != null) {
+                log.info(detail);
+            }
+
+            return new ProductAlreadyExistsException();
         }
 
         return exception;

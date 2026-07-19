@@ -12,6 +12,8 @@ import lombok.Getter;
 import lombok.Setter;
 
 @Entity
+// @ToDo: When updating UniqueConstraints also update ProductService::translateIntegrityViolation to
+// @ToDo: react to correct constraint Issues
 @Table(name = "products", uniqueConstraints = @UniqueConstraint(columnNames = {"sku"}))
 @Getter
 @Setter

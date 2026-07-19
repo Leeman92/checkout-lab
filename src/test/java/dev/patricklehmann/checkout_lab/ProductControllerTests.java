@@ -157,16 +157,32 @@ class ProductControllerTests {
     }
 
     @Test
+    void returnsFrameworkProblemDetailsWhenRouteDoesNotExist() throws Exception {
+        mockMvc.perform(get("/missing-route").header(RequestIdFilter.HEADER_NAME, REQUEST_ID))
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(header().string(RequestIdFilter.HEADER_NAME, REQUEST_ID))
+                .andExpect(jsonPath("$.type").value("urn:problem:not-found"))
+                .andExpect(jsonPath("$.title").value("Not Found"))
+                .andExpect(jsonPath("$.status").value(404))
+                .andExpect(jsonPath("$.detail").isString())
+                .andExpect(jsonPath("$.instance").value("/missing-route"))
+                .andExpect(jsonPath("$.requestId").value(REQUEST_ID))
+                .andExpect(jsonPath("$.timestamp").isString());
+    }
+
+    @Test
     void returnsConflictWhenSeedProductsAlreadyExist() throws Exception {
-        productService.failure =
-                new ProductAlreadyExistsException("Key (sku)=(TSHIRT-BLK-M) already exists.");
+        productService.failure = new ProductAlreadyExistsException();
 
         mockMvc.perform(post("/products/testdata"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.type").value("urn:problem:product-already-exists"))
-                .andExpect(jsonPath("$.title").value("At least one product already exists"))
+                .andExpect(jsonPath("$.title").value("Product already exists"))
                 .andExpect(jsonPath("$.status").value(409))
-                .andExpect(jsonPath("$.detail").value("Key (sku)=(TSHIRT-BLK-M) already exists."));
+                .andExpect(
+                        jsonPath("$.detail")
+                                .value("A product with the supplied SKU already exists."));
     }
 
     @Test

@@ -17,6 +17,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.postgresql.util.PSQLException;
 import org.postgresql.util.PSQLState;
+import org.postgresql.util.ServerErrorMessage;
 import org.springframework.dao.DataIntegrityViolationException;
 
 class ProductServiceTests {
@@ -50,17 +51,24 @@ class ProductServiceTests {
     }
 
     @Test
-    void translatesNestedPostgresUniqueViolationIntoConflictException() {
-        PSQLException postgresException =
-                new PSQLException("duplicate SKU", PSQLState.UNIQUE_VIOLATION);
+    void translatesNestedPostgresUniqueViolationWithoutExposingDatabaseDetail() {
+        String databaseDetail = "Key (sku)=(TSHIRT-BLK-M) already exists.";
+        ServerErrorMessage serverError =
+                new ServerErrorMessage(
+                        "C23505\0Mduplicate key value violates unique constraint\0D"
+                                + databaseDetail
+                                + "\0");
+        PSQLException postgresException = new PSQLException(serverError);
         repository.saveAllFailure =
                 new DataIntegrityViolationException(
                         "could not execute statement",
                         new IllegalStateException(postgresException));
 
+        assertThat(postgresException.getServerErrorMessage().getDetail()).isEqualTo(databaseDetail);
         assertThatThrownBy(() -> service.saveAll(List.of(product("TSHIRT-BLK-M"))))
                 .isInstanceOf(ProductAlreadyExistsException.class)
-                .hasMessage("A product with the supplied SKU already exists.");
+                .hasMessage("A product with the supplied SKU already exists.")
+                .hasMessageNotContaining(databaseDetail);
     }
 
     @Test
