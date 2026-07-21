@@ -13,6 +13,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import dev.patricklehmann.checkout_lab.controller.api.ApiResponseMetadataAdvice;
 import dev.patricklehmann.checkout_lab.controller.api.products.ProductsController;
 import dev.patricklehmann.checkout_lab.entities.products.Product;
+import dev.patricklehmann.checkout_lab.entities.shared.Money;
+import dev.patricklehmann.checkout_lab.entities.shared.Sku;
 import dev.patricklehmann.checkout_lab.exceptions.GlobalExceptionHandler;
 import dev.patricklehmann.checkout_lab.exceptions.product.ProductAlreadyExistsException;
 import dev.patricklehmann.checkout_lab.exceptions.product.ProductNotFoundException;
@@ -71,7 +73,7 @@ class ProductControllerTests {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.sku").value("TSHIRT-BLK-M"));
 
-        assertThat(productService.requestedSku).isEqualTo("TSHIRT-BLK-M");
+        assertThat(productService.requestedSku).isEqualTo(new Sku("TSHIRT-BLK-M"));
     }
 
     @Test
@@ -95,8 +97,8 @@ class ProductControllerTests {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.sku").value("HOODIE-GRY-M"));
 
-        assertThat(productService.savedProduct.getSku()).isEqualTo("HOODIE-GRY-M");
-        assertThat(productService.savedProduct.getNetPriceInCents()).isEqualTo(5999);
+        assertThat(productService.savedProduct.getSku()).isEqualTo(new Sku("HOODIE-GRY-M"));
+        assertThat(productService.savedProduct.getNetPriceInCents()).isEqualTo(Money.ofCents(5999));
         assertThat(productService.savedProduct.getTotalStock()).isEqualTo(20);
         assertThat(productService.savedProduct.getReservedStock()).isEqualTo(3);
     }
@@ -108,7 +110,7 @@ class ProductControllerTests {
                 .andExpect(jsonPath("$.data.length()").value(12));
 
         assertThat(productService.savedProducts)
-                .extracting(Product::getSku)
+                .extracting(product -> product.getSku().value())
                 .containsExactly(
                         "TSHIRT-BLK-M",
                         "TSHIRT-WHT-L",
@@ -220,9 +222,9 @@ class ProductControllerTests {
 
     private static Product product(String sku, String name, long price, boolean active) {
         Product product = new Product();
-        product.setSku(sku);
+        product.setSku(new Sku(sku));
         product.setName(name);
-        product.setNetPriceInCents(price);
+        product.setNetPriceInCents(Money.ofCents(price));
         product.setActive(active);
         return product;
     }
@@ -234,7 +236,7 @@ class ProductControllerTests {
         private Product productToReturn;
         private Product savedProduct;
         private List<Product> savedProducts;
-        private String requestedSku;
+        private Sku requestedSku;
         private RuntimeException failure;
 
         private StubProductService() {
@@ -255,7 +257,7 @@ class ProductControllerTests {
         }
 
         @Override
-        public Product listProductBySku(String sku) {
+        public Product listProductBySku(Sku sku) {
             requestedSku = sku;
             throwFailureIfConfigured();
             return product;

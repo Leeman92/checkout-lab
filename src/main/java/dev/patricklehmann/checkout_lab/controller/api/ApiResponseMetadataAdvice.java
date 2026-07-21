@@ -16,16 +16,31 @@ import org.springframework.http.server.ServletServerHttpRequest;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyAdvice;
 
+/**
+ * Wraps every successful JSON response body in a consistent {@code {timestamp, requestId, data}}
+ * envelope so clients can correlate responses with logs (via the request id) without each
+ * controller having to assemble that metadata itself.
+ *
+ * <p>Error responses are handled separately by {@code GlobalExceptionHandler} (RFC 7807 {@code
+ * ProblemDetail}) and are not wrapped here.
+ */
 @NullMarked
 @RestControllerAdvice(basePackages = "dev.patricklehmann.checkout_lab.controller.api")
 public class ApiResponseMetadataAdvice implements ResponseBodyAdvice<Object> {
 
+    // Only engage for JSON bodies; other converters (e.g. ProblemDetail, binary) pass through
+    // untouched.
     @Override
     public boolean supports(
             MethodParameter returnType, Class<? extends HttpMessageConverter<?>> converterType) {
         return JacksonJsonHttpMessageConverter.class.isAssignableFrom(converterType);
     }
 
+    /**
+     * Prepends {@code timestamp} and {@code requestId} to the outgoing body. A {@code Map} body is
+     * merged in (existing metadata keys are never overwritten); any other body is nested under a
+     * {@code data} key. A {@code null} body is left as-is.
+     */
     @Override
     public @Nullable Object beforeBodyWrite(
             @Nullable Object body,

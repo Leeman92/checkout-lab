@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FindBugsFilter>
+    <!--
+      Response/request DTO records are immutable value carriers: any collection they hold is
+      defensively copied with List.copyOf(...) in the compact constructor, so it is genuinely
+      unmodifiable. SpotBugs' EI_EXPOSE_REP / EI_EXPOSE_REP2 on a record's generated accessor is a
+      false positive here (it flags the List-typed field without seeing that the stored instance is
+      immutable). Suppress it only inside the DTO packages, and only for these two patterns.
+    -->
+    <Match>
+        <Package name="~dev\.patricklehmann\.checkout_lab\.controller\.api\..*\.dto"/>
+        <Or>
+            <Bug pattern="EI_EXPOSE_REP"/>
+            <Bug pattern="EI_EXPOSE_REP2"/>
+        </Or>
+    </Match>
+
+    <!--
+      Service-layer result carriers (records) intentionally hand a managed domain entity to the
+      caller for mapping. Defensively copying a JPA entity is neither practical nor desired, so
+      EI_EXPOSE_REP / EI_EXPOSE_REP2 are false positives on these transports.
+    -->
+    <Match>
+        <Class name="dev.patricklehmann.checkout_lab.services.orders.OrderCreationResult"/>
+        <Or>
+            <Bug pattern="EI_EXPOSE_REP"/>
+            <Bug pattern="EI_EXPOSE_REP2"/>
+        </Or>
+    </Match>
+</FindBugsFilter>

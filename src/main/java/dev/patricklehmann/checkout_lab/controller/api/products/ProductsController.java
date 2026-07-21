@@ -1,10 +1,11 @@
 package dev.patricklehmann.checkout_lab.controller.api.products;
 
 import dev.patricklehmann.checkout_lab.entities.products.Product;
+import dev.patricklehmann.checkout_lab.entities.shared.Money;
+import dev.patricklehmann.checkout_lab.entities.shared.Sku;
 import dev.patricklehmann.checkout_lab.services.products.ProductService;
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.List;
-import java.util.Locale;
 import java.util.concurrent.ThreadLocalRandom;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -13,6 +14,10 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+/**
+ * REST endpoints for listing, looking up, and creating products. A thin transport layer that
+ * delegates persistence and conflict handling to {@link ProductService}.
+ */
 @RestController
 @RequestMapping("/products")
 public class ProductsController {
@@ -30,7 +35,7 @@ public class ProductsController {
 
     @GetMapping({"/{sku}", "/{sku}/"})
     public Product getProductBySku(@PathVariable String sku) {
-        return this.productService.listProductBySku(sku.toUpperCase(Locale.ROOT));
+        return this.productService.listProductBySku(new Sku(sku));
     }
 
     @PostMapping({"", "/"})
@@ -69,9 +74,9 @@ public class ProductsController {
 
         Product product = new Product();
 
-        product.setSku(sku);
+        product.setSku(new Sku(sku));
         product.setName(name);
-        product.setNetPriceInCents(price);
+        product.setNetPriceInCents(Money.ofCents(price));
         product.setActive(active);
         product.setTotalStock(totalStock);
         product.setReservedStock(reservedStock);

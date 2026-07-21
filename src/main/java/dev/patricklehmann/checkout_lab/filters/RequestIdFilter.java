@@ -11,6 +11,13 @@ import org.slf4j.MDC;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
+/**
+ * Assigns a correlation id to every request. Reads a client-supplied {@code X-Request-ID}, or
+ * generates one, echoes it back on the response header, exposes it as a request attribute (consumed
+ * by the response envelope and problem details), and binds it into the SLF4J {@link MDC} so all log
+ * lines for the request carry it. The MDC entry is always cleared in a {@code finally} block to
+ * avoid leaking the id onto the thread's next request.
+ */
 @Component
 public class RequestIdFilter extends OncePerRequestFilter {
 
@@ -38,6 +45,11 @@ public class RequestIdFilter extends OncePerRequestFilter {
         }
     }
 
+    /**
+     * Returns a trusted correlation id: the client header only if it parses as a canonical 36-char
+     * UUID, otherwise a freshly generated one. Even a valid client value is re-serialized from the
+     * parsed UUID so the echoed id is always canonical and never raw client input.
+     */
     private String resolveRequestId(HttpServletRequest request) {
         String candidate = request.getHeader(HEADER_NAME);
 

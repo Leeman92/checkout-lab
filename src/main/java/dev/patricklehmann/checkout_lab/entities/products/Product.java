@@ -1,22 +1,31 @@
 package dev.patricklehmann.checkout_lab.entities.products;
 
+import dev.patricklehmann.checkout_lab.entities.shared.Money;
+import dev.patricklehmann.checkout_lab.entities.shared.Sku;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
-import jakarta.persistence.PostLoad;
 import jakarta.persistence.Table;
-import jakarta.persistence.Transient;
 import jakarta.persistence.UniqueConstraint;
-import java.util.Locale;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.Setter;
 
+/**
+ * A sellable product: its {@link Sku}, display name, net price, active flag, and stock counters.
+ *
+ * <p>Stock is tracked as {@code totalStock} minus {@code reservedStock}; the named {@code
+ * uniqueSku} constraint enforces one product per SKU and is the constraint {@code ProductService}
+ * translates into a domain {@code ProductAlreadyExistsException}.
+ */
 @Entity
-// @ToDo: When updating UniqueConstraints also update ProductService::translateIntegrityViolation to
-// @ToDo: react to correct constraint Issues
-@Table(name = "products", uniqueConstraints = @UniqueConstraint(columnNames = {"sku"}))
+@Table(
+        name = "products",
+        uniqueConstraints =
+                @UniqueConstraint(
+                        columnNames = {"sku"},
+                        name = "uniqueSku"))
 @Getter
 @Setter
 public class Product {
@@ -25,27 +34,23 @@ public class Product {
     @Setter(AccessLevel.PRIVATE)
     private Long id;
 
-    private String sku;
+    private Sku sku;
     private String name;
 
-    private long netPriceInCents;
+    private Money netPriceInCents;
 
     private boolean active;
 
     private int totalStock;
     private int reservedStock;
 
-    @Transient private double netFormattedPrice;
-
-    @Transient private int availableStock;
-
-    @PostLoad
-    private void postLoad() {
-        this.netFormattedPrice = netPriceInCents / 100D;
-        this.availableStock = totalStock - reservedStock;
+    /** Convenience view of the net price as a plain EUR decimal string (e.g. {@code "19.99"}). */
+    public String getNetFormattedPrice() {
+        return this.netPriceInCents.formatted();
     }
 
-    public void setSku(String sku) {
-        this.sku = sku.toUpperCase(Locale.ROOT);
+    /** Stock available to reserve: total on hand minus what is already reserved. */
+    public int getAvailableStock() {
+        return this.totalStock - reservedStock;
     }
 }

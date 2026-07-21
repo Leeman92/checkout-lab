@@ -35,7 +35,4 @@ build/
 .env
 !.env.example
 
-*.md
-!README.md
-
 var/log/

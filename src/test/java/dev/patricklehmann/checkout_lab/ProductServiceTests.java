@@ -5,19 +5,20 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import dev.patricklehmann.checkout_lab.entities.products.Product;
 import dev.patricklehmann.checkout_lab.entities.products.ProductRepository;
+import dev.patricklehmann.checkout_lab.entities.shared.Money;
+import dev.patricklehmann.checkout_lab.entities.shared.Sku;
 import dev.patricklehmann.checkout_lab.exceptions.product.ProductAlreadyExistsException;
 import dev.patricklehmann.checkout_lab.exceptions.product.ProductNotFoundException;
 import dev.patricklehmann.checkout_lab.services.products.ProductService;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import org.hibernate.exception.ConstraintViolationException;
 import org.junit.jupiter.api.Test;
-import org.postgresql.util.PSQLException;
-import org.postgresql.util.PSQLState;
-import org.postgresql.util.ServerErrorMessage;
 import org.springframework.dao.DataIntegrityViolationException;
 
 class ProductServiceTests {
@@ -30,12 +31,12 @@ class ProductServiceTests {
         Product product = product("TSHIRT-BLK-M");
         repository.products.put(product.getSku(), product);
 
-        assertThat(service.listProductBySku("TSHIRT-BLK-M")).isSameAs(product);
+        assertThat(service.listProductBySku(new Sku("TSHIRT-BLK-M"))).isSameAs(product);
     }
 
     @Test
     void throwsSpecificExceptionWhenSkuDoesNotExist() {
-        assertThatThrownBy(() -> service.listProductBySku("MISSING-SKU"))
+        assertThatThrownBy(() -> service.listProductBySku(new Sku("MISSING-SKU")))
                 .isInstanceOf(ProductNotFoundException.class)
                 .hasMessage("Could not find product with given SKU 'MISSING-SKU'")
                 .extracting("sku")
@@ -51,20 +52,16 @@ class ProductServiceTests {
     }
 
     @Test
-    void translatesNestedPostgresUniqueViolationWithoutExposingDatabaseDetail() {
+    void translatesNestedConstraintViolationWithoutExposingDatabaseDetail() {
         String databaseDetail = "Key (sku)=(TSHIRT-BLK-M) already exists.";
-        ServerErrorMessage serverError =
-                new ServerErrorMessage(
-                        "C23505\0Mduplicate key value violates unique constraint\0D"
-                                + databaseDetail
-                                + "\0");
-        PSQLException postgresException = new PSQLException(serverError);
+        ConstraintViolationException constraintViolation =
+                new ConstraintViolationException(
+                        databaseDetail, new SQLException(databaseDetail), "uniqueSku");
         repository.saveAllFailure =
                 new DataIntegrityViolationException(
                         "could not execute statement",
-                        new IllegalStateException(postgresException));
+                        new IllegalStateException(constraintViolation));
 
-        assertThat(postgresException.getServerErrorMessage().getDetail()).isEqualTo(databaseDetail);
         assertThatThrownBy(() -> service.saveAll(List.of(product("TSHIRT-BLK-M"))))
                 .isInstanceOf(ProductAlreadyExistsException.class)
                 .hasMessage("A product with the supplied SKU already exists.")
@@ -76,7 +73,8 @@ class ProductServiceTests {
         repository.saveFailure =
                 new DataIntegrityViolationException(
                         "duplicate SKU",
-                        new PSQLException("duplicate SKU", PSQLState.UNIQUE_VIOLATION));
+                        new ConstraintViolationException(
+                                "duplicate SKU", new SQLException(), "uniqueSku"));
 
         assertThatThrownBy(() -> service.save(product("TSHIRT-BLK-M")))
                 .isInstanceOf(ProductAlreadyExistsException.class)
@@ -93,26 +91,52 @@ class ProductServiceTests {
                 .isSameAs(failure);
     }
 
+    @Test
+    void calculatesAvailableStockCorrectly() {
+        Product product = product("TSHIRT-BLK-M");
+        product.setNetPriceInCents(Money.ofCents(1999));
+        product.setTotalStock(25);
+        product.setReservedStock(7);
+
+        repository.products.put(product.getSku(), product);
+
+        assertThat(service.listProductBySku(new Sku("TSHIRT-BLK-M"))).isSameAs(product);
+
+        assertThat(product.getNetFormattedPrice()).isEqualTo("19.99");
+        assertThat(product.getAvailableStock()).isEqualTo(18);
+    }
+
     private static Product product(String sku) {
         Product product = new Product();
-        product.setSku(sku);
+        product.setSku(new Sku(sku));
         return product;
     }
 
     private static final class FakeProductRepository implements ProductRepository {
 
-        private final Map<String, Product> products = new LinkedHashMap<>();
+        private final Map<Sku, Product> products = new LinkedHashMap<>();
         private RuntimeException saveFailure;
         private RuntimeException saveAllFailure;
 
         @Override
-        public Optional<Product> findBySku(String sku) {
+        public Optional<Product> findBySku(Sku sku) {
             return Optional.ofNullable(products.get(sku));
         }
 
         @Override
-        public List<Product> findAllBySkuIn(Collection<String> skus) {
+        public List<Product> findAllBySkuIn(Collection<Sku> skus) {
             return skus.stream().map(products::get).filter(product -> product != null).toList();
+        }
+
+        @Override
+        public int tryReserveStock(Long productId, int quantity) {
+            for (Product product : products.values()) {
+                if (productId.equals(product.getId()) && product.getAvailableStock() >= quantity) {
+                    product.setReservedStock(product.getReservedStock() + quantity);
+                    return 1;
+                }
+            }
+            return 0;
         }
 
         @Override
