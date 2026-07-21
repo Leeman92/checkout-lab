@@ -10,16 +10,38 @@ only useful if you already have, or intentionally want to operate, a local Traef
 
 ## Current functionality
 
-The application currently provides a product API with:
+The application provides a product catalogue and an order/checkout API:
 
-- PostgreSQL persistence through Spring Data JPA and automatic development schema updates
-- unique product SKUs
+**Products**
+
 - product list, lookup, and creation endpoints
+- unique product SKUs (normalized to uppercase via a `Sku` value object)
 - a development-only endpoint that inserts 12 sample products
-- calculated formatted prices and available stock on products loaded from the database
+- calculated formatted price and available stock on products loaded from the database
+
+**Orders**
+
+- order creation with one or more line items, each reserving stock
+- prices captured at order time, so a later product price change never alters an existing order
+- an order total computed from the line items, stored as exact integer cents (EUR) via a `Money`
+  value object
+- stock reservation that can never oversell, even under concurrent orders, enforced by an atomic
+  conditional database update plus check constraints
+- idempotent creation keyed on a client `Idempotency-Key` header: replaying the same request returns
+  the existing order, while reusing the key for a different request is rejected as a conflict
+- order lookup by id
+- batched validation: a single response reports every invalid line (unknown SKU, inactive product,
+  duplicate SKU) or every stock shortfall at once, rather than one error at a time
+
+**Platform**
+
+- PostgreSQL persistence through Spring Data JPA
+- versioned Flyway migrations applied automatically on application startup; Hibernate validates the
+  schema against the entity mappings on boot
 - request IDs in the `X-Request-ID` response header, response bodies, and log context
 - consistent metadata envelopes for successful JSON responses
-- `application/problem+json` responses for missing products, duplicate SKUs, and unexpected errors
+- `application/problem+json` (RFC 7807) responses for all client and server errors, each with a
+  stable machine-readable `type`
 - console and size/time-rotated file logging
 
 ## Quick start for new developers
@@ -160,9 +182,10 @@ curl --fail-with-body \
 ```
 
 Product JSON contains the persisted fields `id`, `sku`, `name`, `netPriceInCents`, `active`,
-`totalStock`, and `reservedStock`. Products read from PostgreSQL also expose the derived fields
-`netFormattedPrice` (for example `19.99`) and `availableStock` (`totalStock - reservedStock`). Prices
-are persisted as integer cents to avoid floating-point storage errors.
+`totalStock`, and `reservedStock`. Products also expose the derived fields `netFormattedPrice` (a
+string such as `"19.99"`) and `availableStock` (`totalStock - reservedStock`). Prices are persisted
+as integer cents to avoid floating-point storage errors, and formatting is an exact base-100 split,
+so no rounding ever occurs.
 
 Successful JSON responses are wrapped with metadata:
 
@@ -178,7 +201,7 @@ Successful JSON responses are wrapped with metadata:
     "active": true,
     "totalStock": 25,
     "reservedStock": 3,
-    "netFormattedPrice": 19.99,
+    "netFormattedPrice": "19.99",
     "availableStock": 22
   }
 }
@@ -191,6 +214,78 @@ Errors use Spring's Problem Details representation. A missing product returns `4
 the requested SKU, while a unique-SKU conflict returns `409 Conflict`. Each problem contains
 `type`, `title`, `status`, `detail`, `instance`, `timestamp`, and `requestId`; unexpected exceptions
 return a generic `500 Internal Server Error` detail without leaking internal implementation data.
+
+## Order API
+
+| Method | Path | Purpose | Success status |
+| --- | --- | --- | --- |
+| `POST` | `/orders` | Create an order and reserve stock | `201 Created` (or `200 OK` on replay) |
+| `GET` | `/orders/{id}` | Fetch one order with its line items | `200 OK` |
+
+Creating an order requires an `Idempotency-Key` request header (any stable, unique string such as a
+UUID). The body lists one or more line items; each item needs a `sku` and a positive integer
+`quantity`.
+
+```shell
+curl --fail-with-body \
+  --request POST \
+  --header 'Content-Type: application/json' \
+  --header 'Idempotency-Key: 715bcf40-0502-4cbe-ba2b-6eb531478c1a' \
+  --data '{ "items": [ { "sku": "TSHIRT-BLK-M", "quantity": 2 } ] }' \
+  http://localhost:8080/orders
+```
+
+A successful response carries the order under the usual metadata envelope:
+
+```json
+{
+  "timestamp": "2026-07-22T10:15:30.123Z",
+  "requestId": "59edc107-a937-40e0-b387-3d342053a238",
+  "data": {
+    "id": 1,
+    "status": "RESERVED",
+    "currency": "EUR",
+    "totalNetInCents": 3998,
+    "createdAt": "2026-07-22T10:15:30.100Z",
+    "items": [
+      { "sku": "TSHIRT-BLK-M", "quantity": 2, "unitNetPriceInCents": 1999, "lineNetInCents": 3998 }
+    ]
+  }
+}
+```
+
+**Idempotency.** Sending the same request again with the same `Idempotency-Key` returns the existing
+order with `200 OK` and does not reserve stock a second time. Reusing the key with a different body
+returns `409 Conflict` (`urn:problem:idempotency-conflict`) and changes nothing.
+
+**Error responses.** All order errors use `application/problem+json`. The two batched types list
+every offending line in an `errors` array, so a client can fix all problems in one pass:
+
+| Situation | Status | `type` |
+| --- | --- | --- |
+| Malformed body (empty items, quantity ≤ 0, blank SKU) | `400 Bad Request` | `urn:problem:validation-error` |
+| Unknown SKU, inactive product, or duplicate SKU (batched) | `422 Unprocessable Entity` | `urn:problem:order-validation` |
+| Not enough stock for one or more lines (batched) | `409 Conflict` | `urn:problem:insufficient-stock` |
+| Idempotency key reused with different content | `409 Conflict` | `urn:problem:idempotency-conflict` |
+| Unknown order id | `404 Not Found` | `urn:problem:order-not-found` |
+
+For example, an order that references an unknown SKU, an inactive product, and a repeated SKU is
+rejected in a single `422` response:
+
+```json
+{
+  "type": "urn:problem:order-validation",
+  "title": "Order validation failed",
+  "status": 422,
+  "errors": [
+    { "sku": "NOPE", "reason": "UNKNOWN_SKU" },
+    { "sku": "BELT-BRN-100", "reason": "INACTIVE_PRODUCT" },
+    { "sku": "TSHIRT-BLK-M", "reason": "DUPLICATE_SKU" }
+  ],
+  "requestId": "…",
+  "timestamp": "…"
+}
+```
 
 ## Everyday development commands
 
@@ -207,6 +302,7 @@ Run `make up` before commands that execute inside the `app` container.
 | `make verify` | Runs tests, formatting checks, SpotBugs, and the other Maven verification steps |
 | `make spotless` | Formats Java source files; this changes files in your working tree |
 | `make fix` | Runs `spotless` followed by `verify` |
+| `make migrate` | Runs Flyway migrations via the Maven plugin (the app also migrates on startup) |
 | `make build-prod` | Builds the production Docker image named `checkout-lab` |
 
 The project directory is mounted into the development container at `/app`. Source changes made on
@@ -221,10 +317,12 @@ updates your local files. Maven's generated `target` directory is kept in the Do
 
 ### Tests and verification
 
-`make test` runs focused tests for the product entity, product service, request-ID filter, API
-response envelope, request serialization, SKU normalization, sample-data generation, and Problem
-Details errors. These tests use in-memory fakes and `MockMvc`, so the test cases themselves do not
-modify the development database.
+`make test` runs focused unit and web-layer tests: the `Money` and `Sku` value objects, the product
+and order services (including stock reservation, price snapshotting, idempotent replay/conflict, and
+batched validation), the product and order controllers, the request-ID filter, the API response
+envelope, and Problem Details errors. These tests use hand-written in-memory fakes, a fixed `Clock`
+for deterministic timestamps, and `MockMvc`, so the test cases themselves do not modify the
+development database.
 
 `make verify` additionally checks Java formatting with Spotless, runs SpotBugs, and generates the
 JaCoCo coverage report under `target/site/jacoco` inside the app target volume. If Java 25 is
