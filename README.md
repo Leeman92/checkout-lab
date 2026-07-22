@@ -27,11 +27,28 @@ The application provides a product catalogue and an order/checkout API:
   value object
 - stock reservation that can never oversell, even under concurrent orders, enforced by an atomic
   conditional database update plus check constraints
+- optimistic locking on orders (a version column) so a lost update between concurrent operations is
+  detected rather than silently applied
 - idempotent creation keyed on a client `Idempotency-Key` header: replaying the same request returns
   the existing order, while reusing the key for a different request is rejected as a conflict
-- order lookup by id
+- order lookup by id, including its known payment attempts
+- order cancellation that releases the reserved stock exactly once; cancelling an already-cancelled
+  order is a no-op, and a paid order can no longer be cancelled
 - batched validation: a single response reports every invalid line (unknown SKU, inactive product,
   duplicate SKU) or every stock shortfall at once, rather than one error at a time
+
+**Payments**
+
+- a payment attempt started against a reserved order and settled through a (simulated) payment
+  gateway
+- three outcomes: a success settles the order permanently as `PAID`; a decline leaves the order
+  `RESERVED` so a later attempt can retry; a pending authorization stays open and is resolved later
+  by a gateway callback
+- an append-only result log keyed on a unique message id, so a redelivered gateway message is a
+  harmless no-op, while a result that contradicts an already-settled attempt is rejected without ever
+  overwriting the recorded outcome
+- concurrency-safe settlement: parallel payment starts, or a success arriving for a cancelled order,
+  can never double-pay or corrupt an order, enforced by an order version and a unique attempt number
 
 **Platform**
 
@@ -220,7 +237,8 @@ return a generic `500 Internal Server Error` detail without leaking internal imp
 | Method | Path | Purpose | Success status |
 | --- | --- | --- | --- |
 | `POST` | `/orders` | Create an order and reserve stock | `201 Created` (or `200 OK` on replay) |
-| `GET` | `/orders/{id}` | Fetch one order with its line items | `200 OK` |
+| `GET` | `/orders/{id}` | Fetch one order with its line items and payment attempts | `200 OK` |
+| `POST` | `/orders/{id}/cancel` | Cancel a reserved order and release its stock | `200 OK` |
 
 Creating an order requires an `Idempotency-Key` request header (any stable, unique string such as a
 UUID). The body lists one or more line items; each item needs a `sku` and a positive integer
@@ -247,12 +265,18 @@ A successful response carries the order under the usual metadata envelope:
     "currency": "EUR",
     "totalNetInCents": 3998,
     "createdAt": "2026-07-22T10:15:30.100Z",
+    "updatedAt": "2026-07-22T10:15:30.100Z",
     "items": [
       { "sku": "TSHIRT-BLK-M", "quantity": 2, "unitNetPriceInCents": 1999, "lineNetInCents": 3998 }
-    ]
+    ],
+    "payments": []
   }
 }
 ```
+
+An order also carries an `updatedAt` timestamp (bumped whenever its status changes) and a `payments`
+array holding the payment attempts recorded against it. A freshly created order has no payments yet;
+each entry lists its `attemptNumber`, `status`, `amountInCents`, `createdAt`, and `resolvedAt`.
 
 **Idempotency.** Sending the same request again with the same `Idempotency-Key` returns the existing
 order with `200 OK` and does not reserve stock a second time. Reusing the key with a different body
@@ -268,6 +292,8 @@ every offending line in an `errors` array, so a client can fix all problems in o
 | Not enough stock for one or more lines (batched) | `409 Conflict` | `urn:problem:insufficient-stock` |
 | Idempotency key reused with different content | `409 Conflict` | `urn:problem:idempotency-conflict` |
 | Unknown order id | `404 Not Found` | `urn:problem:order-not-found` |
+| Illegal status change (e.g. cancelling a paid order) | `409 Conflict` | `urn:problem:order-transition` |
+| A concurrent request won the race (parallel start or lost update) | `409 Conflict` | `urn:problem:concurrent-modification` |
 
 For example, an order that references an unknown SKU, an inactive product, and a repeated SKU is
 rejected in a single `422` response:
@@ -286,6 +312,99 @@ rejected in a single `422` response:
   "timestamp": "…"
 }
 ```
+
+### Cancelling an order
+
+`POST /orders/{id}/cancel` cancels a reserved order and returns it with `status` `CANCELLED`. The
+reserved stock is released back to availability exactly once: repeating the call on an
+already-cancelled order is a no-op and does not release stock twice. A paid order can no longer be
+cancelled and returns `409 Conflict` (`urn:problem:order-transition`).
+
+```shell
+curl --fail-with-body --request POST http://localhost:8080/orders/1/cancel
+```
+
+## Payment API
+
+A payment settles a reserved order. A client starts a payment attempt against the order; the
+(simulated) gateway reports an outcome immediately, or leaves the attempt pending for a later
+callback. Only a successful payment moves an order to the permanent `PAID` state.
+
+| Method | Path | Purpose | Success status |
+| --- | --- | --- | --- |
+| `POST` | `/orders/{id}/payments` | Start a payment attempt for a reserved order | `201 Created` |
+| `POST` | `/payments/callback` | Apply a (possibly delayed) gateway result to an attempt | `200 OK` |
+
+Start a payment. The body is optional; its `desiredOutcome` steers the simulated gateway and is one
+of `SUCCESS`, `DECLINED`, or `PENDING` (default `SUCCESS`). In a real integration the gateway, not
+the caller, would decide — this field only exists so every path is reachable in development.
+
+```shell
+curl --fail-with-body \
+  --request POST \
+  --header 'Content-Type: application/json' \
+  --data '{ "desiredOutcome": "SUCCESS" }' \
+  http://localhost:8080/orders/1/payments
+```
+
+The response (under the usual metadata envelope) is the payment attempt and the resulting order
+status:
+
+```json
+{
+  "data": {
+    "id": 1,
+    "orderId": 1,
+    "attemptNumber": 1,
+    "status": "SUCCESS",
+    "gatewayReference": "sim-8f0c…",
+    "amountInCents": 3998,
+    "createdAt": "2026-07-22T10:16:00.000Z",
+    "resolvedAt": "2026-07-22T10:16:00.000Z",
+    "orderStatus": "PAID"
+  }
+}
+```
+
+The three outcomes behave differently:
+
+- **`SUCCESS`** settles the attempt (`resolvedAt` set) and moves the order to `PAID`, permanently.
+- **`DECLINED`** settles the attempt but leaves the order `RESERVED`; the client can start another
+  payment to retry, which is recorded as the next `attemptNumber`.
+- **`PENDING`** keeps the attempt open (`resolvedAt` is `null`) and leaves the order `RESERVED`
+  until a callback resolves it.
+
+Resolve a pending attempt (or receive a delayed result) via the callback, addressed by the attempt's
+`gatewayReference`:
+
+```shell
+curl --fail-with-body \
+  --request POST \
+  --header 'Content-Type: application/json' \
+  --data '{ "gatewayReference": "sim-8f0c…", "result": "SUCCESS", "messageId": "evt-1" }' \
+  http://localhost:8080/payments/callback
+```
+
+- `result` must be terminal (`SUCCESS` or `DECLINED`), never `PENDING`.
+- `messageId` is the deduplication key. Every inbound result is written to an append-only log with a
+  unique `messageId`, so redelivering the same message is a harmless no-op that returns the current
+  attempt unchanged.
+- A result that contradicts an already-settled attempt (for example `DECLINED` after a `SUCCESS`)
+  is rejected with `409 Conflict` (`urn:problem:payment-conflict`) and never overwrites the recorded
+  outcome — but the conflicting message is still stored in the log for traceability.
+
+**Payment error responses.** Like every other endpoint, payment errors use
+`application/problem+json`:
+
+| Situation | Status | `type` |
+| --- | --- | --- |
+| Order is already paid (or has a successful attempt) | `409 Conflict` | `urn:problem:order-already-paid` |
+| Order is not in a payable status (e.g. cancelled) | `409 Conflict` | `urn:problem:order-not-payable` |
+| A payment is already in progress for the order | `409 Conflict` | `urn:problem:payment-in-progress` |
+| Callback references an unknown attempt | `404 Not Found` | `urn:problem:payment-attempt-not-found` |
+| Callback result contradicts a settled attempt | `409 Conflict` | `urn:problem:payment-conflict` |
+| A success arrives for a no-longer-payable order (e.g. cancelled) | `409 Conflict` | `urn:problem:order-transition` |
+| A concurrent request won the race (parallel start or lost update) | `409 Conflict` | `urn:problem:concurrent-modification` |
 
 ## Everyday development commands
 
@@ -319,10 +438,19 @@ updates your local files. Maven's generated `target` directory is kept in the Do
 
 `make test` runs focused unit and web-layer tests: the `Money` and `Sku` value objects, the product
 and order services (including stock reservation, price snapshotting, idempotent replay/conflict, and
-batched validation), the product and order controllers, the request-ID filter, the API response
+batched validation), the payment service and controller (start/decline/pending, callback dedup and
+conflict, cancellation), the product and order controllers, the request-ID filter, the API response
 envelope, and Problem Details errors. These tests use hand-written in-memory fakes, a fixed `Clock`
 for deterministic timestamps, and `MockMvc`, so the test cases themselves do not modify the
 development database.
+
+A second group of tests exercises behavior that in-memory fakes cannot prove and that only shows up
+against a real database: no overselling of the last unit under concurrent orders, no double-payment
+under parallel payment starts, and the mapping of a lost race to a clean `409`. These start a
+throwaway PostgreSQL container (via Testcontainers, sharing one container for the run) and drive the
+real services from several threads at once. **They require access to a Docker daemon**, so run them
+with the Maven wrapper on a host that has Docker (`./mvnw test`); the in-container `make test` does
+not currently expose a Docker socket to the `app` service and will skip or fail those cases.
 
 `make verify` additionally checks Java formatting with Spotless, runs SpotBugs, and generates the
 JaCoCo coverage report under `target/site/jacoco` inside the app target volume. If Java 25 is

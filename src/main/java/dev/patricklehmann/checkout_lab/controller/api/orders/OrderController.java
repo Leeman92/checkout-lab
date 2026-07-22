@@ -2,6 +2,7 @@ package dev.patricklehmann.checkout_lab.controller.api.orders;
 
 import dev.patricklehmann.checkout_lab.controller.api.orders.dto.CreateOrderRequest;
 import dev.patricklehmann.checkout_lab.controller.api.orders.dto.OrderResponse;
+import dev.patricklehmann.checkout_lab.entities.orders.Order;
 import dev.patricklehmann.checkout_lab.services.orders.OrderCreationResult;
 import dev.patricklehmann.checkout_lab.services.orders.OrderService;
 import jakarta.validation.Valid;
@@ -48,6 +49,13 @@ public class OrderController {
 
     @GetMapping({"/{id}", "/{id}/"})
     public OrderResponse getOrder(@PathVariable long id) {
-        return OrderResponse.from(orderService.getOrder(id));
+        Order order = orderService.getOrder(id);
+        return OrderResponse.from(order, orderService.getPaymentAttempts(order));
+    }
+
+    @PostMapping({"/{id}/cancel", "/{id}/cancel/"})
+    public OrderResponse cancelOrder(@PathVariable long id) {
+        Order order = orderService.cancelOrder(id);
+        return OrderResponse.from(order, orderService.getPaymentAttempts(order));
     }
 }

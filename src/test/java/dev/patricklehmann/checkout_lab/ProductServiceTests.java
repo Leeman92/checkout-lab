@@ -140,6 +140,17 @@ class ProductServiceTests {
         }
 
         @Override
+        public int releaseStock(Long productId, int quantity) {
+            for (Product product : products.values()) {
+                if (productId.equals(product.getId()) && product.getReservedStock() >= quantity) {
+                    product.setReservedStock(product.getReservedStock() - quantity);
+                    return 1;
+                }
+            }
+            return 0;
+        }
+
+        @Override
         public <S extends Product> S save(S entity) {
             if (saveFailure != null) {
                 throw saveFailure;

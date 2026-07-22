@@ -27,4 +27,15 @@
             <Bug pattern="EI_EXPOSE_REP2"/>
         </Or>
     </Match>
+
+    <!--
+      Controllers store their constructor-injected Spring beans (services). That is the standard
+      dependency-injection pattern, not an exposure of internal state — the bean is a
+      framework-managed singleton that cannot be defensively copied. SpotBugs flags this
+      inconsistently across controllers; suppress it uniformly for the controller layer.
+    -->
+    <Match>
+        <Package name="~dev\.patricklehmann\.checkout_lab\.controller\.api.*"/>
+        <Bug pattern="EI_EXPOSE_REP2"/>
+    </Match>
 </FindBugsFilter>

@@ -1,6 +1,13 @@
 package dev.patricklehmann.checkout_lab;
 
+import dev.patricklehmann.checkout_lab.entities.orders.OrderStatus;
+import dev.patricklehmann.checkout_lab.entities.payments.PaymentAttemptStatus;
+import dev.patricklehmann.checkout_lab.entities.shared.StateMachine;
+import dev.patricklehmann.checkout_lab.exceptions.orders.OrderTransitionException;
+import dev.patricklehmann.checkout_lab.exceptions.payments.PaymentConflictException;
 import java.time.Clock;
+import java.util.EnumMap;
+import java.util.EnumSet;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
@@ -23,5 +30,35 @@ public class CheckoutLabApplication {
     @Bean
     Clock clock() {
         return Clock.systemUTC();
+    }
+
+    @Bean
+    StateMachine<PaymentAttemptStatus> paymentStateMachine() {
+        EnumMap<PaymentAttemptStatus, EnumSet<PaymentAttemptStatus>> validTransitions =
+                new EnumMap<>(PaymentAttemptStatus.class);
+
+        validTransitions.put(
+                PaymentAttemptStatus.PENDING,
+                EnumSet.of(PaymentAttemptStatus.DECLINED, PaymentAttemptStatus.SUCCESS));
+        validTransitions.put(
+                PaymentAttemptStatus.DECLINED, EnumSet.noneOf(PaymentAttemptStatus.class));
+        validTransitions.put(
+                PaymentAttemptStatus.SUCCESS, EnumSet.noneOf(PaymentAttemptStatus.class));
+
+        return new StateMachine<>(validTransitions, PaymentConflictException::new);
+    }
+
+    @Bean
+    StateMachine<OrderStatus> orderStateMachine() {
+        EnumMap<OrderStatus, EnumSet<OrderStatus>> validTransitions =
+                new EnumMap<>(OrderStatus.class);
+
+        validTransitions.put(OrderStatus.PAID, EnumSet.noneOf(OrderStatus.class));
+        validTransitions.put(OrderStatus.PAYMENT_FAILED, EnumSet.noneOf(OrderStatus.class));
+        validTransitions.put(OrderStatus.CANCELLED, EnumSet.noneOf(OrderStatus.class));
+        validTransitions.put(
+                OrderStatus.RESERVED, EnumSet.of(OrderStatus.PAID, OrderStatus.CANCELLED));
+
+        return new StateMachine<>(validTransitions, OrderTransitionException::new);
     }
 }

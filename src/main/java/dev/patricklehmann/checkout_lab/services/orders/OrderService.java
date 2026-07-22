@@ -6,10 +6,13 @@ import dev.patricklehmann.checkout_lab.entities.orders.Order;
 import dev.patricklehmann.checkout_lab.entities.orders.OrderItem;
 import dev.patricklehmann.checkout_lab.entities.orders.OrderRepository;
 import dev.patricklehmann.checkout_lab.entities.orders.OrderStatus;
+import dev.patricklehmann.checkout_lab.entities.payments.PaymentAttempt;
+import dev.patricklehmann.checkout_lab.entities.payments.PaymentAttemptRepository;
 import dev.patricklehmann.checkout_lab.entities.products.Product;
 import dev.patricklehmann.checkout_lab.entities.products.ProductRepository;
 import dev.patricklehmann.checkout_lab.entities.shared.Money;
 import dev.patricklehmann.checkout_lab.entities.shared.Sku;
+import dev.patricklehmann.checkout_lab.entities.shared.StateMachine;
 import dev.patricklehmann.checkout_lab.exceptions.orders.IdempotencyConflictException;
 import dev.patricklehmann.checkout_lab.exceptions.orders.InsufficientStockException;
 import dev.patricklehmann.checkout_lab.exceptions.orders.OrderNotFoundException;
@@ -51,7 +54,9 @@ public class OrderService {
 
     private final OrderRepository orderRepository;
     private final ProductRepository productRepository;
+    private final PaymentAttemptRepository paymentAttemptRepository;
     private final Clock clock;
+    private final StateMachine<OrderStatus> orderStateMachine;
 
     /**
      * Reads an order by id.
@@ -63,6 +68,16 @@ public class OrderService {
         return orderRepository
                 .findById(orderId)
                 .orElseThrow(() -> new OrderNotFoundException(orderId));
+    }
+
+    /**
+     * The payment attempts for an order, oldest first — the "known payment results" surfaced on the
+     * order query (FR-013). Kept as a separate read so {@code Order} need not own a payment
+     * collection (payments are a neighbouring aggregate, referenced by id, not an owned part).
+     */
+    @Transactional(readOnly = true)
+    public List<PaymentAttempt> getPaymentAttempts(Order order) {
+        return paymentAttemptRepository.findByOrderOrderByAttemptNumberAsc(order);
     }
 
     /**
@@ -100,6 +115,53 @@ public class OrderService {
 
         orderRepository.save(order);
         return new OrderCreationResult(order, false);
+    }
+
+    /**
+     * Cancels an unpaid order and releases its reserved stock (FR-025–028).
+     *
+     * @throws OrderNotFoundException if the order does not exist
+     */
+    @Transactional
+    public Order cancelOrder(long orderId) {
+        Order order =
+                orderRepository
+                        .findById(orderId)
+                        .orElseThrow(() -> new OrderNotFoundException(orderId));
+
+        if (order.getStatus() == OrderStatus.CANCELLED) {
+            return order;
+        }
+
+        OrderStatus newOrderStatus =
+                orderStateMachine.requireValidTransition(
+                        order.getStatus(), OrderStatus.CANCELLED, order.getIdempotencyKey());
+
+        releaseReservedStock(order);
+
+        order.setStatus(newOrderStatus);
+        order.setUpdatedAt(Instant.now(clock));
+
+        return order;
+    }
+
+    /**
+     * Returns each line's reserved units to the available pool (the mirror of {@code
+     * reserveStock}).
+     */
+    private void releaseReservedStock(Order order) {
+        Set<Sku> skus =
+                order.getItems().stream().map(OrderItem::getSku).collect(Collectors.toSet());
+
+        Map<Sku, Product> productsBySku = new HashMap<>();
+        for (Product product : productRepository.findAllBySkuIn(skus)) {
+            productsBySku.put(product.getSku(), product);
+        }
+
+        for (OrderItem item : order.getItems()) {
+            Product product = productsBySku.get(item.getSku());
+            productRepository.releaseStock(product.getId(), item.getQuantity());
+        }
     }
 
     /**
@@ -254,9 +316,11 @@ public class OrderService {
     private Order createNewOrder(String idempotencyKey, String fingerprint) {
         Order newOrder = new Order();
 
+        Instant now = Instant.now(clock);
         newOrder.setStatus(OrderStatus.RESERVED);
         newOrder.setCurrency(CURRENCY);
-        newOrder.setCreatedAt(Instant.now(clock));
+        newOrder.setCreatedAt(now);
+        newOrder.setUpdatedAt(now);
         newOrder.setIdempotencyKey(idempotencyKey);
         newOrder.setRequestFingerprint(fingerprint);
         newOrder.setTotalNetInCents(Money.zero());

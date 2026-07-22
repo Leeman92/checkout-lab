@@ -13,6 +13,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
+import jakarta.persistence.Version;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -28,8 +29,6 @@ import lombok.Setter;
  * <p>Named {@code orders} at the table level because {@code order} is a reserved SQL word.
  */
 @Entity
-// @ToDo: When updating UniqueConstraints also update the integrity-violation translation so it
-// @ToDo: reacts to the correct constraint (mirrors the products convention).
 @Table(name = "orders", uniqueConstraints = @UniqueConstraint(columnNames = {"idempotency_key"}))
 @Getter
 @Setter
@@ -39,6 +38,16 @@ public class Order {
     @GeneratedValue(strategy = GenerationType.AUTO)
     @Setter(AccessLevel.PRIVATE)
     private Long id;
+
+    /**
+     * Optimistic-locking version. Hibernate increments it on each update and rejects a write whose
+     * version is stale, so two concurrent transitions of the same order (e.g. pay vs. cancel)
+     * cannot both commit (FR-024 / FR-029). Managed by the persistence provider — never set by
+     * hand.
+     */
+    @Version
+    @Setter(AccessLevel.NONE)
+    private long version;
 
     /** Client-supplied retry key; the unique constraint makes it the idempotency guarantee. */
     @Column(nullable = false)
@@ -61,6 +70,13 @@ public class Order {
 
     @Column(nullable = false)
     private Instant createdAt;
+
+    /**
+     * Last time the order changed (status transition). Set via the injected clock,
+     * not @UpdateTimestamp, so it stays deterministic in tests.
+     */
+    @Column(nullable = false)
+    private Instant updatedAt;
 
     // Managed by hand rather than via Lombok so we never hand out the mutable backing list
     // (SpotBugs EI_EXPOSE_REP). Hibernate uses field access, so no public setter is required.

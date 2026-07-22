@@ -100,6 +100,29 @@
             <version>4.0.0-M1</version>
         </dependency>
 
+        <!--
+          Integration tests (Etappe D) run against a real PostgreSQL in a throwaway container, to
+          prove behavior that in-memory fakes cannot: no oversell / no double-pay under real
+          concurrency, optimistic-lock retry, transactional rollback, and persistence across
+          restart. Versions come from the Spring Boot parent's managed Testcontainers BOM.
+          spring-boot-testcontainers lets a @Container be wired into Spring via @ServiceConnection.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-testcontainers</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+
     </dependencies>
 
     <build>

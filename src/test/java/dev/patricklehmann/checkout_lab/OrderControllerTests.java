@@ -12,12 +12,15 @@ import dev.patricklehmann.checkout_lab.controller.api.orders.dto.CreateOrderRequ
 import dev.patricklehmann.checkout_lab.entities.orders.Order;
 import dev.patricklehmann.checkout_lab.entities.orders.OrderItem;
 import dev.patricklehmann.checkout_lab.entities.orders.OrderStatus;
+import dev.patricklehmann.checkout_lab.entities.payments.PaymentAttempt;
+import dev.patricklehmann.checkout_lab.entities.payments.PaymentAttemptStatus;
 import dev.patricklehmann.checkout_lab.entities.shared.Money;
 import dev.patricklehmann.checkout_lab.entities.shared.Sku;
 import dev.patricklehmann.checkout_lab.exceptions.GlobalExceptionHandler;
 import dev.patricklehmann.checkout_lab.exceptions.orders.IdempotencyConflictException;
 import dev.patricklehmann.checkout_lab.exceptions.orders.InsufficientStockException;
 import dev.patricklehmann.checkout_lab.exceptions.orders.OrderNotFoundException;
+import dev.patricklehmann.checkout_lab.exceptions.orders.OrderTransitionException;
 import dev.patricklehmann.checkout_lab.exceptions.orders.OrderValidationError;
 import dev.patricklehmann.checkout_lab.exceptions.orders.OrderValidationException;
 import dev.patricklehmann.checkout_lab.exceptions.orders.OrderValidationReason;
@@ -212,6 +215,40 @@ class OrderControllerTests {
     }
 
     @Test
+    void getOrderSurfacesPaymentAttempts() throws Exception {
+        orderService.order = sampleOrder();
+        orderService.paymentAttempts = List.of(sampleAttempt());
+
+        mockMvc.perform(get("/orders/1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.payments.length()").value(1))
+                .andExpect(jsonPath("$.data.payments[0].attemptNumber").value(1))
+                .andExpect(jsonPath("$.data.payments[0].status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.payments[0].amountInCents").value(3998));
+    }
+
+    @Test
+    void cancelOrderReturnsCancelledOrder() throws Exception {
+        Order cancelled = sampleOrder();
+        cancelled.setStatus(OrderStatus.CANCELLED);
+        orderService.order = cancelled;
+
+        mockMvc.perform(post("/orders/1/cancel"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("CANCELLED"));
+    }
+
+    @Test
+    void cancelPaidOrderReturns409() throws Exception {
+        orderService.failure =
+                new OrderTransitionException("key", OrderStatus.PAID, OrderStatus.CANCELLED);
+
+        mockMvc.perform(post("/orders/1/cancel"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.type").value("urn:problem:order-transition"));
+    }
+
+    @Test
     void getUnknownOrderReturns404() throws Exception {
         orderService.failure = new OrderNotFoundException(999L);
 
@@ -226,6 +263,7 @@ class OrderControllerTests {
         order.setStatus(OrderStatus.RESERVED);
         order.setCurrency("EUR");
         order.setCreatedAt(Instant.parse("2026-07-22T10:00:00Z"));
+        order.setUpdatedAt(Instant.parse("2026-07-22T10:00:00Z"));
         order.setIdempotencyKey(KEY);
         order.setRequestFingerprint("fingerprint");
         order.setTotalNetInCents(Money.ofCents(3998));
@@ -240,16 +278,27 @@ class OrderControllerTests {
         return order;
     }
 
+    private static PaymentAttempt sampleAttempt() {
+        PaymentAttempt attempt = new PaymentAttempt();
+        attempt.setAttemptNumber(1);
+        attempt.setStatus(PaymentAttemptStatus.SUCCESS);
+        attempt.setAmountInCents(Money.ofCents(3998));
+        attempt.setCreatedAt(Instant.parse("2026-07-22T10:00:00Z"));
+        attempt.setResolvedAt(Instant.parse("2026-07-22T10:00:05Z"));
+        return attempt;
+    }
+
     static final class StubOrderService extends OrderService {
 
         private OrderCreationResult result;
         private Order order;
+        private List<PaymentAttempt> paymentAttempts = List.of();
         private String capturedKey;
         private CreateOrderRequest capturedRequest;
         private RuntimeException failure;
 
         private StubOrderService() {
-            super(null, null, null);
+            super(null, null, null, null, null);
         }
 
         @Override
@@ -264,6 +313,19 @@ class OrderControllerTests {
 
         @Override
         public Order getOrder(long orderId) {
+            if (failure != null) {
+                throw failure;
+            }
+            return order;
+        }
+
+        @Override
+        public List<PaymentAttempt> getPaymentAttempts(Order order) {
+            return paymentAttempts;
+        }
+
+        @Override
+        public Order cancelOrder(long orderId) {
             if (failure != null) {
                 throw failure;
             }

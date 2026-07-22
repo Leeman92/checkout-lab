@@ -26,13 +26,34 @@ public interface ProductRepository extends EntityRepository<Product, Long> {
     @Modifying
     @Query(
             """
-            UPDATE
-                Product p
-            SET
-                p.reservedStock = p.reservedStock + :quantity
-            WHERE
-                p.id = :productId AND
-                (p.totalStock - p.reservedStock >= :quantity)
-            """)
+        UPDATE
+            Product p
+        SET
+            p.reservedStock = p.reservedStock + :quantity
+        WHERE
+            p.id = :productId AND
+            (p.totalStock - p.reservedStock >= :quantity)
+        """)
     int tryReserveStock(@Param("productId") Long productId, @Param("quantity") int quantity);
+
+    /**
+     * Atomically releases {@code quantity} previously-reserved units for the given product, used
+     * when an order is cancelled (FR-026). The mirror of {@link #tryReserveStock}: a single
+     * conditional {@code UPDATE} that decrements {@code reservedStock} only while at least that
+     * many units are actually reserved, so the counter can never be driven negative.
+     *
+     * @return {@code 1} if the release was applied, {@code 0} if there was not that much reserved
+     */
+    @Modifying
+    @Query(
+            """
+        UPDATE
+            Product p
+        SET
+            p.reservedStock = p.reservedStock - :quantity
+        WHERE
+            p.id = :productId AND
+            p.reservedStock >= :quantity
+        """)
+    int releaseStock(@Param("productId") Long productId, @Param("quantity") int quantity);
 }

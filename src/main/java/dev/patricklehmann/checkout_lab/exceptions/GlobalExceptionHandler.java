@@ -2,8 +2,14 @@ package dev.patricklehmann.checkout_lab.exceptions;
 
 import dev.patricklehmann.checkout_lab.exceptions.orders.IdempotencyConflictException;
 import dev.patricklehmann.checkout_lab.exceptions.orders.InsufficientStockException;
+import dev.patricklehmann.checkout_lab.exceptions.orders.OrderAlreadyPaidException;
 import dev.patricklehmann.checkout_lab.exceptions.orders.OrderNotFoundException;
+import dev.patricklehmann.checkout_lab.exceptions.orders.OrderNotPayableException;
+import dev.patricklehmann.checkout_lab.exceptions.orders.OrderTransitionException;
 import dev.patricklehmann.checkout_lab.exceptions.orders.OrderValidationException;
+import dev.patricklehmann.checkout_lab.exceptions.payments.PaymentAttemptNotFoundException;
+import dev.patricklehmann.checkout_lab.exceptions.payments.PaymentConflictException;
+import dev.patricklehmann.checkout_lab.exceptions.payments.PaymentInProgressException;
 import dev.patricklehmann.checkout_lab.exceptions.product.ProductAlreadyExistsException;
 import dev.patricklehmann.checkout_lab.exceptions.product.ProductNotFoundException;
 import dev.patricklehmann.checkout_lab.filters.RequestIdFilter;
@@ -15,6 +21,8 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
 import org.jspecify.annotations.NullMarked;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
@@ -34,7 +42,7 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExcep
  * HTTP status, so clients can branch on a durable identifier rather than a status code or message.
  *
  * <p>Extending {@link ResponseEntityExceptionHandler} lets us also intercept Spring's own MVC
- * exceptions (e.g. body validation). Every problem is funnelled through the overridden {@link
+ * exceptions (e.g. body validation). Every problem is funneled through the overridden {@link
  * #createResponseEntity} so it is uniformly enriched with request id, timestamp, and instance.
  */
 @NullMarked
@@ -93,7 +101,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
         ProblemDetail problem =
                 ProblemDetail.forStatusAndDetail(
-                        HttpStatus.UNPROCESSABLE_ENTITY,
+                        HttpStatus.UNPROCESSABLE_CONTENT,
                         "The order request contains one or more invalid lines.");
 
         problem.setTitle("Order validation failed");
@@ -101,7 +109,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         problem.setProperty("errors", exception.getErrors());
 
         return createResponseEntity(
-                problem, HttpHeaders.EMPTY, HttpStatus.UNPROCESSABLE_ENTITY, request);
+                problem, HttpHeaders.EMPTY, HttpStatus.UNPROCESSABLE_CONTENT, request);
     }
 
     @ExceptionHandler(InsufficientStockException.class)
@@ -134,6 +142,135 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         problem.setTitle("Idempotency key conflict");
         problem.setType(URI.create("urn:problem:idempotency-conflict"));
         problem.setProperty("idempotencyKey", exception.getIdempotencyKey());
+
+        return createResponseEntity(problem, HttpHeaders.EMPTY, HttpStatus.CONFLICT, request);
+    }
+
+    @ExceptionHandler(OrderAlreadyPaidException.class)
+    protected ResponseEntity<Object> handleOrderAlreadyPaid(
+            OrderAlreadyPaidException exception, WebRequest request) {
+        log.info("Rejected: order already paid orderId={}", exception.getOrderId());
+
+        ProblemDetail problem =
+                ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, exception.getMessage());
+
+        problem.setTitle("Order already paid");
+        problem.setType(URI.create("urn:problem:order-already-paid"));
+        problem.setProperty("orderId", exception.getOrderId());
+
+        return createResponseEntity(problem, HttpHeaders.EMPTY, HttpStatus.CONFLICT, request);
+    }
+
+    @ExceptionHandler(OrderNotPayableException.class)
+    protected ResponseEntity<Object> handleOrderNotPayable(
+            OrderNotPayableException exception, WebRequest request) {
+        log.info(
+                "Rejected: order not payable orderId={} status={}",
+                exception.getOrderId(),
+                exception.getStatus());
+
+        ProblemDetail problem =
+                ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, exception.getMessage());
+
+        problem.setTitle("Order not payable");
+        problem.setType(URI.create("urn:problem:order-not-payable"));
+        problem.setProperty("orderId", exception.getOrderId());
+        problem.setProperty("status", exception.getStatus());
+
+        return createResponseEntity(problem, HttpHeaders.EMPTY, HttpStatus.CONFLICT, request);
+    }
+
+    @ExceptionHandler(PaymentInProgressException.class)
+    protected ResponseEntity<Object> handlePaymentInProgress(
+            PaymentInProgressException exception, WebRequest request) {
+        log.info("Rejected: payment already in progress orderId={}", exception.getOrderId());
+
+        ProblemDetail problem =
+                ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, exception.getMessage());
+
+        problem.setTitle("Payment in progress");
+        problem.setType(URI.create("urn:problem:payment-in-progress"));
+        problem.setProperty("orderId", exception.getOrderId());
+
+        return createResponseEntity(problem, HttpHeaders.EMPTY, HttpStatus.CONFLICT, request);
+    }
+
+    @ExceptionHandler(PaymentAttemptNotFoundException.class)
+    protected ResponseEntity<Object> handlePaymentAttemptNotFound(
+            PaymentAttemptNotFoundException exception, WebRequest request) {
+        log.info("Payment attempt not found: gatewayReference={}", exception.getGatewayReference());
+
+        ProblemDetail problem =
+                ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, exception.getMessage());
+
+        problem.setTitle("Payment attempt not found");
+        problem.setType(URI.create("urn:problem:payment-attempt-not-found"));
+        problem.setProperty("gatewayReference", exception.getGatewayReference());
+
+        return createResponseEntity(problem, HttpHeaders.EMPTY, HttpStatus.NOT_FOUND, request);
+    }
+
+    @ExceptionHandler(PaymentConflictException.class)
+    protected ResponseEntity<Object> handlePaymentConflict(
+            PaymentConflictException exception, WebRequest request) {
+        log.info(
+                "Payment conflict: gatewayReference={} existing={} incoming={}",
+                exception.getGatewayReference(),
+                exception.getExistingStatus(),
+                exception.getAttemptedResult());
+
+        ProblemDetail problem =
+                ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, exception.getMessage());
+
+        problem.setTitle("Payment result conflict");
+        problem.setType(URI.create("urn:problem:payment-conflict"));
+        problem.setProperty("gatewayReference", exception.getGatewayReference());
+        problem.setProperty("existingStatus", exception.getExistingStatus());
+        problem.setProperty("attemptedResult", exception.getAttemptedResult());
+
+        return createResponseEntity(problem, HttpHeaders.EMPTY, HttpStatus.CONFLICT, request);
+    }
+
+    @ExceptionHandler(OrderTransitionException.class)
+    protected ResponseEntity<Object> handleOrderTransition(
+            OrderTransitionException exception, WebRequest request) {
+        log.info(
+                "Order transition conflict: orderReference={} existing={} attempted={}",
+                exception.getOrderReference(),
+                exception.getExistingStatus(),
+                exception.getAttemptedResult());
+
+        ProblemDetail problem =
+                ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, exception.getMessage());
+
+        problem.setTitle("Order transition conflict");
+        problem.setType(URI.create("urn:problem:order-transition"));
+        problem.setProperty("orderReference", exception.getOrderReference());
+        problem.setProperty("existingStatus", exception.getExistingStatus());
+        problem.setProperty("attemptedStatus", exception.getAttemptedResult());
+
+        return createResponseEntity(problem, HttpHeaders.EMPTY, HttpStatus.CONFLICT, request);
+    }
+
+    @ExceptionHandler({
+        DataIntegrityViolationException.class,
+        OptimisticLockingFailureException.class
+    })
+    protected ResponseEntity<Object> handleDataIntegrityViolation(
+            Throwable exception, WebRequest request) {
+
+        log.info(
+                "DataIntegrityViolation: Cause={}; Message={}",
+                exception.getCause(),
+                exception.getMessage());
+
+        ProblemDetail problem =
+                ProblemDetail.forStatusAndDetail(
+                        HttpStatus.CONFLICT,
+                        "The resource was modified by a concurrent request. Please retry.");
+
+        problem.setTitle("The resource was modified by a concurrent request. Please retry.");
+        problem.setType(URI.create("urn:problem:concurrent-modification"));
 
         return createResponseEntity(problem, HttpHeaders.EMPTY, HttpStatus.CONFLICT, request);
     }

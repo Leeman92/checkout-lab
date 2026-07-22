@@ -2,12 +2,13 @@ package dev.patricklehmann.checkout_lab.controller.api.orders.dto;
 
 import dev.patricklehmann.checkout_lab.entities.orders.Order;
 import dev.patricklehmann.checkout_lab.entities.orders.OrderStatus;
+import dev.patricklehmann.checkout_lab.entities.payments.PaymentAttempt;
 import java.time.Instant;
 import java.util.List;
 
 /**
- * API response view of a full order aggregate, including its line items. {@code totalNetInCents} is
- * exposed as bare cents to match the money wire contract.
+ * API response view of a full order aggregate: its line items and its known payment attempts
+ * (FR-013). {@code totalNetInCents} is exposed as bare cents to match the money wire contract.
  */
 public record OrderResponse(
         Long id,
@@ -15,17 +16,26 @@ public record OrderResponse(
         String currency,
         long totalNetInCents,
         Instant createdAt,
-        List<OrderItemResponse> items) {
+        Instant updatedAt,
+        List<OrderItemResponse> items,
+        List<OrderPaymentView> payments) {
 
     public OrderResponse {
-        // Defensive, unmodifiable copy so the response record never aliases a mutable list.
+        // Defensive, unmodifiable copies so the response record never aliases mutable lists.
         items = items == null ? List.of() : List.copyOf(items);
+        payments = payments == null ? List.of() : List.copyOf(payments);
     }
 
-    /** Projects a persisted {@link Order} aggregate (and its items) onto its response view. */
+    /** Projects an order with no payment attempts (e.g. a freshly created order). */
     public static OrderResponse from(Order order) {
+        return from(order, List.of());
+    }
+
+    /** Projects a persisted {@link Order} together with its payment attempts (FR-013). */
+    public static OrderResponse from(Order order, List<PaymentAttempt> attempts) {
         List<OrderItemResponse> items =
                 order.getItems().stream().map(OrderItemResponse::from).toList();
+        List<OrderPaymentView> payments = attempts.stream().map(OrderPaymentView::from).toList();
 
         return new OrderResponse(
                 order.getId(),
@@ -33,6 +43,8 @@ public record OrderResponse(
                 order.getCurrency(),
                 order.getTotalNetInCents().amountInCents(),
                 order.getCreatedAt(),
-                items);
+                order.getUpdatedAt(),
+                items,
+                payments);
     }
 }
