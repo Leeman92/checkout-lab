@@ -59,6 +59,8 @@ The application provides a product catalogue and an order/checkout API:
 - consistent metadata envelopes for successful JSON responses
 - `application/problem+json` (RFC 7807) responses for all client and server errors, each with a
   stable machine-readable `type`
+- a health endpoint at `/actuator/health` (Spring Boot Actuator) reporting overall status,
+  liveness/readiness probes, and a database-connectivity check
 - console and size/time-rotated file logging
 
 ## Quick start for new developers
@@ -405,6 +407,20 @@ curl --fail-with-body \
 | Callback result contradicts a settled attempt | `409 Conflict` | `urn:problem:payment-conflict` |
 | A success arrives for a no-longer-payable order (e.g. cancelled) | `409 Conflict` | `urn:problem:order-transition` |
 | A concurrent request won the race (parallel start or lost update) | `409 Conflict` | `urn:problem:concurrent-modification` |
+
+## Health and readiness
+
+Spring Boot Actuator exposes a health endpoint for operational checks:
+
+```shell
+curl -s http://localhost:8080/actuator/health
+```
+
+It returns overall `status` plus per-component details (`show-details` is enabled), including a
+`db` component that confirms the application can actually reach PostgreSQL — not just that the
+process is up. Liveness and readiness probe groups are enabled at `/actuator/health/liveness` and
+`/actuator/health/readiness` for orchestrators. Only the `health` endpoint is exposed over HTTP;
+other Actuator endpoints stay disabled.
 
 ## Everyday development commands
 

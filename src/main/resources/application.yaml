@@ -11,6 +11,20 @@ spring:
         properties:
             hibernate:
                 dialect: org.hibernate.dialect.PostgreSQLDialect
+management:
+    endpoints:
+        web:
+            exposure:
+                # Expose only the health endpoint over HTTP; other actuator endpoints stay off.
+                include: health
+    endpoint:
+        health:
+            # Show the individual component checks (notably db connectivity) in the response, and
+            # enable the liveness/readiness probe groups for orchestrators.
+            show-details: always
+            probes:
+                enabled: true
+
 logging:
     level:
         web: ${LOG_LEVEL:INFO}
