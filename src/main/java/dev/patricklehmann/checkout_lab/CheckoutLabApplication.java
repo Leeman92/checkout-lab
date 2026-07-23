@@ -54,7 +54,6 @@ public class CheckoutLabApplication {
                 new EnumMap<>(OrderStatus.class);
 
         validTransitions.put(OrderStatus.PAID, EnumSet.noneOf(OrderStatus.class));
-        validTransitions.put(OrderStatus.PAYMENT_FAILED, EnumSet.noneOf(OrderStatus.class));
         validTransitions.put(OrderStatus.CANCELLED, EnumSet.noneOf(OrderStatus.class));
         validTransitions.put(
                 OrderStatus.RESERVED, EnumSet.of(OrderStatus.PAID, OrderStatus.CANCELLED));

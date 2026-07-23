@@ -13,7 +13,7 @@ class IntegrationInfraTest extends IntegrationTest {
         Integer applied =
                 jdbc.queryForObject(
                         "SELECT count(*) FROM flyway_schema_history WHERE success", Integer.class);
-        assertThat(applied).isEqualTo(4);
+        assertThat(applied).isEqualTo(5);
 
         Integer products = jdbc.queryForObject("SELECT count(*) FROM products", Integer.class);
         assertThat(products).isZero();

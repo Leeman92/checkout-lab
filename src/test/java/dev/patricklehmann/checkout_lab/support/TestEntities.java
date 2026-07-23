@@ -66,7 +66,6 @@ public final class TestEntities {
         EnumMap<OrderStatus, EnumSet<OrderStatus>> transitions = new EnumMap<>(OrderStatus.class);
         transitions.put(OrderStatus.RESERVED, EnumSet.of(OrderStatus.PAID, OrderStatus.CANCELLED));
         transitions.put(OrderStatus.PAID, EnumSet.noneOf(OrderStatus.class));
-        transitions.put(OrderStatus.PAYMENT_FAILED, EnumSet.noneOf(OrderStatus.class));
         transitions.put(OrderStatus.CANCELLED, EnumSet.noneOf(OrderStatus.class));
         return new StateMachine<>(transitions, OrderTransitionException::new);
     }

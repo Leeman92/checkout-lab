@@ -16,7 +16,6 @@ import dev.patricklehmann.checkout_lab.entities.products.Product;
 import dev.patricklehmann.checkout_lab.entities.shared.Money;
 import dev.patricklehmann.checkout_lab.entities.shared.Sku;
 import dev.patricklehmann.checkout_lab.exceptions.GlobalExceptionHandler;
-import dev.patricklehmann.checkout_lab.exceptions.product.ProductAlreadyExistsException;
 import dev.patricklehmann.checkout_lab.exceptions.product.ProductNotFoundException;
 import dev.patricklehmann.checkout_lab.filters.RequestIdFilter;
 import dev.patricklehmann.checkout_lab.services.products.ProductService;
@@ -104,37 +103,6 @@ class ProductControllerTests {
     }
 
     @Test
-    void generatesTheDocumentedSeedProductsWithValidStock() throws Exception {
-        mockMvc.perform(post("/products/testdata"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.length()").value(12));
-
-        assertThat(productService.savedProducts)
-                .extracting(product -> product.getSku().value())
-                .containsExactly(
-                        "TSHIRT-BLK-M",
-                        "TSHIRT-WHT-L",
-                        "HOODIE-GRY-M",
-                        "HOODIE-BLK-XL",
-                        "JEANS-BLU-32",
-                        "SNEAKER-WHT-42",
-                        "CAP-NVY-UNI",
-                        "SOCKS-BLK-3P",
-                        "BELT-BRN-100",
-                        "JACKET-GRN-L",
-                        "BAG-BLK-20L",
-                        "WATCH-SLV-01");
-
-        assertThat(productService.savedProducts)
-                .allSatisfy(
-                        product -> {
-                            assertThat(product.getTotalStock()).isBetween(0, 100);
-                            assertThat(product.getReservedStock())
-                                    .isBetween(0, product.getTotalStock());
-                        });
-    }
-
-    @Test
     void returnsProblemDetailsWhenProductDoesNotExist() throws Exception {
         productService.failure = new ProductNotFoundException("MISSING-SKU");
 
@@ -169,20 +137,6 @@ class ProductControllerTests {
                 .andExpect(jsonPath("$.instance").value("/missing-route"))
                 .andExpect(jsonPath("$.requestId").value(REQUEST_ID))
                 .andExpect(jsonPath("$.timestamp").isString());
-    }
-
-    @Test
-    void returnsConflictWhenSeedProductsAlreadyExist() throws Exception {
-        productService.failure = new ProductAlreadyExistsException();
-
-        mockMvc.perform(post("/products/testdata"))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.type").value("urn:problem:product-already-exists"))
-                .andExpect(jsonPath("$.title").value("Product already exists"))
-                .andExpect(jsonPath("$.status").value(409))
-                .andExpect(
-                        jsonPath("$.detail")
-                                .value("A product with the supplied SKU already exists."));
     }
 
     @Test
@@ -235,7 +189,6 @@ class ProductControllerTests {
         private Product product;
         private Product productToReturn;
         private Product savedProduct;
-        private List<Product> savedProducts;
         private Sku requestedSku;
         private RuntimeException failure;
 
@@ -245,7 +198,6 @@ class ProductControllerTests {
             product = new Product();
             productToReturn = new Product();
             savedProduct = null;
-            savedProducts = List.of();
             requestedSku = null;
             failure = null;
         }
@@ -268,13 +220,6 @@ class ProductControllerTests {
             savedProduct = product;
             throwFailureIfConfigured();
             return productToReturn;
-        }
-
-        @Override
-        public Iterable<Product> saveAll(List<Product> products) {
-            savedProducts = List.copyOf(products);
-            throwFailureIfConfigured();
-            return savedProducts;
         }
 
         private void throwFailureIfConfigured() {
